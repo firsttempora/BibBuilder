@@ -3,11 +3,13 @@ from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bparser import BibTexParser
 from datetime import datetime as dtime
 from doi2bib.crossref import get_bib_from_doi
+from pylatexenc.latexencode import utf8tolatex
 from PyPDF2 import PdfFileReader
 from PyPDF2.utils import PdfReadError
 import os
 import re
 import shutil
+import unicodedata
 
 from .journal_abbreviations import abbreviate_journal
 
@@ -86,6 +88,9 @@ class BetterBibDatabase(BibDatabase):
 
         tmpdat = parser.parse(bib_string)
 
+        if skip_if_doi_exists and 'doi' in tmpdat.entries[0] and tmpdat.entries[0]['doi'] in self.dois:
+            return
+
         if file_name is not None:
             tmpdat.entries[0]['file'] = file_name
 
@@ -135,21 +140,41 @@ class BetterBibDatabase(BibDatabase):
         """
         for key, value in record.items():
             record[key] = sanitize_html_strings(value)
+
         record = bibtexparser.customization.page_double_hyphen(record)
         if 'journal' in record:
             record['journal'] = abbreviate_journal(record['journal'])
 
-        record['ID'] = self.format_id(record['ID'])
+        # This should happen after we've sanitized the author string for miscellanceous HTML crud.
+        record['ID'] = self.format_id(record)
+
+        for key, value in record.items():
+            if key != 'ID':
+                # This needs to happen after we create the ID, because the id creation can remove accents from unicode
+                # characters but not Latex accents. The non_ascii_only is needed to avoid escaping special Latex
+                # characters already present, like with e.g. {NO}$_2$
+                record[key] = utf8tolatex(record[key], non_ascii_only=True)
+
         return record
 
-    def format_id(self, record_id):
+    def format_id(self, record):
         """
         Format a record's ID to avoid underscores and to be unique among the records already contained in the database.
         :param record_id: the record ID as a string
         :return: the modified record ID as a string
         """
-        # I'm going to take out the underscore in the ID because underscores don't always play well in Latex.
-        record_id = record_id.replace('_', '')
+        # I'm going to customize the id completely to be last name, first initial, year. This will cut down on duplicate
+        # keys from people with the same last name
+        first_author = record['author'].split(' and ')[0]
+        first_author = bibtexparser.customization.splitname(first_author)
+        # Each element of the first_author dict is a list
+        record_id = '{}{}{}'.format(first_author['last'][0], first_author['first'][0][0], record['year'][-2:])
+        # Strip out unicode characters. First try to remove accents, then just ignore non-ascii characters
+        # Credit to https://stackoverflow.com/questions/517923/what-is-the-best-way-to-remove-accents-in-a-python-unicode-string#518232
+        record_id = ''.join([c for c in unicodedata.normalize('NFD', record_id) if unicodedata.category(c) != 'Mn'])
+        # encode() gives a bytes string, then decode turns it back into a regular string. This feels awkward, but I'm
+        # not sure at the moment what a more elegant way to handle this is.
+        record_id = record_id.encode('ascii', 'ignore').decode('ascii')
 
         # Check if the current ID exists already. If it does, add a letter to the end to make it unique.
         all_ids = self.ids()
