@@ -18,14 +18,18 @@ import pdb
 # Geophysical Research Letters appararently does something REALLY WEIRD with spaces in their article, so treat GRL
 # papers specially. We'll look for a DOI that doesn't always show up first in the text, but is easier to parse
 grl_re = re.compile('(?<={})'.format(re.escape('GeophysicalResearchLetters\nRESEARCHLETTER\n')) + '10.[\d\.]+/[^\s]+?' + '(?=KeyPoint)')
+agu_re = re.compile('(?<={})'.format(re.escape('RESEARCHARTICLE\n')) + '10.[\d\.]+/[^\s]+?' + '(?=KeyPoint)')
 
 # My turn. As far as I can tell from http://www.doi.org/doi_handbook/2_Numbering.html, there's very
 # little restriction on suffixes, so I'm just going to look for a space first. If that fails, then
 # the problem may be that there's a period after it that isn't part of the DOI because it's at the
 # end of a sentence.
 all_doi_res = [re.compile('10.[\d\.]+/[^\s]+'),
-               re.compile('10.[\d\.]+/[^\s]+(?=\.\s)'),
-               grl_re]
+               re.compile('10.[\d\.]+/[^\s]+(?=(\.\s|,))'),
+               re.compile('(?<=doi:)10.[\d\.]+/[^\s]+'),  # repeat the last two, but require it be prefaced with "doi:"
+               re.compile('(?<=doi:)10.[\d\.]+/[^\s]+(?=(\.\s|,))'),  # to rule out some false positives
+               grl_re,
+               agu_re]
 
 
 class DoiNotFoundError(Exception):
@@ -175,6 +179,10 @@ class BetterBibDatabase(BibDatabase):
         # encode() gives a bytes string, then decode turns it back into a regular string. This feels awkward, but I'm
         # not sure at the moment what a more elegant way to handle this is.
         record_id = record_id.encode('ascii', 'ignore').decode('ascii')
+        # Lastly remove any Latex commands, which start with a \ and go until the next non-letter character, and
+        # anything between curly braces, which are probably random Latex symbols that should not be in the key
+        record_id = re.sub('\\\\[a-zA-Z]+', '', record_id)
+        record_id = re.sub('[^\w\-]', '', record_id)
 
         # Check if the current ID exists already. If it does, add a letter to the end to make it unique.
         all_ids = self.ids()
@@ -194,13 +202,7 @@ def shell_error(msg, exit_code=1):
     exit(exit_code)
 
 
-def pdf2bib(pdf_file, verbosity=0):
-    """
-    Given a PDF file, tries to extract the paper's DOI and fetch the BibTex entry
-    :param pdf_file: the path to the PDF file
-    :return: The bibtex entry as a string
-    """
-
+def get_pdf_page_text(pdf_file, page=0):
     if not isinstance(pdf_file, str):
         raise TypeError('pdf_file must be a string')
     elif not os.path.isfile(pdf_file):
@@ -209,12 +211,24 @@ def pdf2bib(pdf_file, verbosity=0):
     with open(pdf_file, 'rb') as pdf:
         try:
             pdf_obj = PdfFileReader(pdf)
-            pdf_text = pdf_obj.getPage(0).extractText()
+            pdf_text = pdf_obj.getPage(page).extractText()
         except:
             raise PdfParsingError('Problem parsing {}. Likely this is an old PDF not amenable to parsing.'.format(pdf_file))
 
+    return pdf_text
+
+
+def pdf2bib(pdf_file, verbosity=0):
+    """
+    Given a PDF file, tries to extract the paper's DOI and fetch the BibTex entry
+    :param pdf_file: the path to the PDF file
+    :return: The bibtex entry as a string
+    """
+
     found_a_doi = False
     bib_string = ''
+
+    pdf_text = get_pdf_page_text(pdf_file)
 
     # Try each of the regexes in sequence. Hopefully one will work.
     for doi_re in all_doi_res:
