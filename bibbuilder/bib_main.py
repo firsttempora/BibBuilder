@@ -6,7 +6,8 @@ from . import bib_utils as bu
 # TODO: implement pruning
 # TODO: implement logging better, especially a list of files that failed
 # TODO: continue to add doi regex to get as many papers as possible
-
+# TODO: fix e.g. line 2055 in test10.bib. Need to extract letters and numbers from between {} but leave everything else.
+#       Make sure this handles if there's >1 set of {}, e.g. 'Alpha{\"{o}}Bravo{\"{ee}}Charlie'
 
 def update_database_from_folder(bibdat, root_folder, no_duplicates=False):
     root_folder = os.path.abspath(root_folder)
