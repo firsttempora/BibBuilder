@@ -5,8 +5,6 @@ import os
 
 from . import bib_utils as bu, root_logger
 
-import pdb
-
 # TODO: implement pruning
 # TODO: continue to add doi regex to get as many papers as possible
 # TODO: fix --quiet
@@ -95,11 +93,16 @@ def parse_args():
 
     parser.add_argument('--no-log-file', action='store_true', help='Do not create an automatic log file')
 
+    parser.add_argument('--working-dir', help='Set the working directory')
+
     log_group = parser.add_mutually_exclusive_group()
     log_group.add_argument('-v', '--verbose', default=0, action='count', help='Increase logging to console')
     log_group.add_argument('-q', '--quiet', action='store_true', help='Suppress logging to console')
 
     args = parser.parse_args()
+
+    if args.working_dir is not None:
+        os.chdir(args.working_dir)
 
     bib_file = arg_or_env_var(args.bibtex_file, 'BIBBUILDER_BIB_FILE')
     if bib_file is None:
@@ -110,8 +113,6 @@ def parse_args():
     do_not_backup = args.no_backup
     no_duplicates = arg_or_env_var(args.no_duplicates, 'BIBBUILDER_NO_DUP', bib_file, default_val=False, parsing_fxn=lambda x: x=='True')
     update_home_dir = args.update_home_dir
-
-    pdb.set_trace()
 
     if args.quiet:
         verbosity = -1
