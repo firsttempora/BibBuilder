@@ -44,6 +44,10 @@ class PdfParsingError(Exception):
     pass
 
 
+class ChangeHomeError(Exception):
+    pass
+
+
 class BetterBibDatabase(BibDatabase):
     @property
     def files(self):
@@ -114,16 +118,25 @@ class BetterBibDatabase(BibDatabase):
         self.add_entry_by_string(bib_string, file_name=pdf_file, **kwargs)
 
     @staticmethod
-    def load_from_file(bib_file):
+    def load_from_file(bib_file, update_home=True):
         """
         Load a bibtex file as a database
         :param bib_file: the path to the .bib file as a string
+        :param update_home: boolean, if True (default) tries to update the paths given in the 'file' part of each entry
+        to match the home directory of this computer.
         :return: the new database
         """
         with open(bib_file, 'r') as bib_obj:
             tmpdat = bibtexparser.load(bib_obj)
         bibdat = BetterBibDatabase()
         bibdat.entries = tmpdat.entries
+
+        home_dir = os.getenv('HOME')
+        if update_home and home_dir is not None:
+            for entry in bibdat.entries:
+                if 'file' in entry:
+                    entry['file'] = change_home_dir(entry['file'], home_dir)
+
         return bibdat
 
     def save_to_file(self, bib_file):
@@ -306,7 +319,7 @@ def sanitize_html_strings(string):
     return string
 
 
-def init_bib_database(bib_file, no_backup=False):
+def init_bib_database(bib_file, no_backup=False, update_home=True):
     """
     Initialize the BibTex database. If given file exist, back it up and read it in. If it does not exist, create an
     empty database.
@@ -318,7 +331,7 @@ def init_bib_database(bib_file, no_backup=False):
     if os.path.isfile(bib_file):
         if not no_backup:
             backup_bib_file(bib_file)
-        return BetterBibDatabase.load_from_file(bib_file)
+        return BetterBibDatabase.load_from_file(bib_file, update_home=update_home)
     else:
         return BetterBibDatabase()
 
@@ -329,6 +342,24 @@ def backup_bib_file(bib_file):
     backup_suffix = '-bckp-{}'.format(dtime.now().strftime('%Y%m%d-%H%M%S'))
     file_name += backup_suffix + ext
     shutil.copy(bib_file, os.path.join(file_path, file_name))
+
+
+def change_home_dir(path, new_home, old_home=None):
+    if old_home is None:
+        sep = re.search('[/\\\\]', path).group()
+        split_path = path.split(sep)
+        for i in range(len(split_path)):
+            new_path = os.path.join(new_home, *split_path[i:])
+            if os.path.isfile(new_path) or os.path.isdir(new_path):
+                return new_path
+
+        raise ChangeHomeError('Unable to modify "{}" with use "{}" as the home directory and produce a valid path'.
+                              format(path, new_home))
+    else:
+        new_path = path.replace(old_home, new_home)
+        if not os.path.isfile(new_path) and not os.path.isdir(new_path):
+            raise ChangeHomeError('Replacing "{}" with "{}" did not yield a valid path'.format(old_home, new_home))
+        return new_path
 
 
 def iter_letters(start, stop):
