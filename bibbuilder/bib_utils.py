@@ -11,6 +11,7 @@ import re
 import shutil
 import unicodedata
 
+from . import root_logger
 from .journal_abbreviations import abbreviate_journal
 
 import pdb
@@ -82,7 +83,7 @@ class BetterBibDatabase(BibDatabase):
         """
         if skip_if_file_exists and file_name is not None:
             if file_name in self.files:
-                print('Not adding {}, already in .bib file'.format(file_name))
+                root_logger.info('Not adding {}, entry for that file already in .bib file'.format(file_name))
                 return
 
         # To ensure we get a properly formatted string, we'll parse it into a standard BibDatabase then steal
@@ -97,6 +98,7 @@ class BetterBibDatabase(BibDatabase):
         tmpdat = parser.parse(bib_string)
 
         if skip_if_doi_exists and 'doi' in tmpdat.entries[0] and tmpdat.entries[0]['doi'] in self.dois:
+            root_logger.info('Not adding {}, entry with DOI "{}" already in bib file'.format(file_name, tmpdat.entries[0]['doi']))
             return
 
         if file_name is not None:
@@ -139,13 +141,16 @@ class BetterBibDatabase(BibDatabase):
 
         return bibdat
 
-    def save_to_file(self, bib_file):
+    def save_to_file(self, bib_file, **parse_settings):
         """
         Save this database to a file.
         :param bib_file: the path to the file as a string. Note! Will be overwritten.
         :return: none
         """
         with open(bib_file, 'w') as bib_obj:
+            for key, value in parse_settings.items():
+                bib_obj.write('%{}={}\n'.format(key, value))
+            bib_obj.write('\n')
             bibtexparser.dump(self, bib_obj)
 
     def format_entry(self, record):
@@ -226,12 +231,12 @@ def get_pdf_page_text(pdf_file, page=0):
             pdf_obj = PdfFileReader(pdf)
             pdf_text = pdf_obj.getPage(page).extractText()
         except:
-            raise PdfParsingError('Problem parsing {}. Likely this is an old PDF not amenable to parsing.'.format(pdf_file))
+            raise PdfParsingError('PDF parsing failed on {}.'.format(pdf_file))
 
     return pdf_text
 
 
-def pdf2bib(pdf_file, verbosity=0):
+def pdf2bib(pdf_file):
     """
     Given a PDF file, tries to extract the paper's DOI and fetch the BibTex entry
     :param pdf_file: the path to the PDF file
@@ -266,8 +271,7 @@ def pdf2bib(pdf_file, verbosity=0):
                 last_idx = idx + 1
         doi_string = doi_string[:last_idx]
 
-        if verbosity > 0:
-            print('Looking up DOI {}'.format(doi_string))
+        root_logger.debug('Looking up DOI "{}"'.format(doi_string))
 
         # Try to retrieve the bib string based on the doi. If we do so successfully, go ahead and return.
         # If not, then try the next regex. If there are none left, then we'll leave bib_string as an empty
@@ -279,9 +283,9 @@ def pdf2bib(pdf_file, verbosity=0):
             bib_string = ''
 
     if not found_a_doi:
-        raise DoiNotFoundError('No DOI found on first page of {}'.format(pdf_file))
+        raise DoiNotFoundError('DOI search failed on {}'.format(pdf_file))
     elif len(bib_string) == 0:
-        raise BibRetrievalError('Could not retrieve bib string for {}'.format(pdf_file))
+        raise BibRetrievalError('Bib string lookup failed on {}'.format(pdf_file))
 
     return bib_string
 
@@ -292,7 +296,6 @@ def fix_subscript(string, before_substring, after_substring):
     if subscript is not None:
         string = string.replace(subscript.group(), '$_{{{}}}$'.format(subscript.groupdict()['subscript'].strip()))
     return string
-
 
 
 def sanitize_html_strings(string):
@@ -350,7 +353,7 @@ def change_home_dir(path, new_home, old_home=None):
         split_path = path.split(sep)
         for i in range(len(split_path)):
             new_path = os.path.join(new_home, *split_path[i:])
-            if os.path.isfile(new_path) or os.path.isdir(new_path):
+            if os.path.exists(new_path):
                 return new_path
 
         raise ChangeHomeError('Unable to modify "{}" with use "{}" as the home directory and produce a valid path'.
