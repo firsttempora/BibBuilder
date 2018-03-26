@@ -6,8 +6,7 @@ from . import bib_utils as bu
 # TODO: implement pruning
 # TODO: implement logging better, especially a list of files that failed
 # TODO: continue to add doi regex to get as many papers as possible
-# TODO: fix e.g. line 2055 in test10.bib. Need to extract letters and numbers from between {} but leave everything else.
-#       Make sure this handles if there's >1 set of {}, e.g. 'Alpha{\"{o}}Bravo{\"{ee}}Charlie'
+
 
 def update_database_from_folder(bibdat, root_folder, no_duplicates=False):
     root_folder = os.path.abspath(root_folder)
@@ -38,6 +37,7 @@ def parse_args():
     parser.add_argument('--prune', action='store_true', help='Remove entries who do not have a corresponding file')
     parser.add_argument('--no-backup', action='store_true', help='Do not make a backup of the .bib file before modifying it')
     parser.add_argument('--no-duplicates', action='store_true', help='Do not include files if a duplicate DOI already exists')
+    parser.add_argument('-u', '--update-home-dir', action='store_true', help='Just update the home directory in the "file" field of each entry; do nothing else')
 
     args = parser.parse_args()
 
@@ -49,14 +49,18 @@ def parse_args():
     do_prune = args.prune
     do_not_backup = args.no_backup
     no_duplicates = args.no_duplicates
+    update_home_dir = args.update_home_dir
 
-    return bib_file, pdf_top_dir, do_prune, do_not_backup, no_duplicates
+    return bib_file, pdf_top_dir, do_prune, do_not_backup, no_duplicates, update_home_dir
 
 
 def main():
-    bib_file, pdf_top_dir, do_prune, do_not_backup, no_duplicates = parse_args()
+    bib_file, pdf_top_dir, do_prune, do_not_backup, no_duplicates, update_home_dir_only = parse_args()
     bib_dat = bu.init_bib_database(bib_file, no_backup=do_not_backup)
-    bib_dat = update_database_from_folder(bib_dat, pdf_top_dir, no_duplicates=no_duplicates)
+    if update_home_dir_only:
+        pass
+    else:
+        bib_dat = update_database_from_folder(bib_dat, pdf_top_dir, no_duplicates=no_duplicates)
     bib_dat.save_to_file(bib_file)
 
 if __name__ == '__main__':
