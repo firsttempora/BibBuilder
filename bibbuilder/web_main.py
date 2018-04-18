@@ -2,6 +2,7 @@ import argparse
 import bibtexparser
 from copy import deepcopy
 import re
+import shutil
 
 import pdb
 
@@ -10,8 +11,10 @@ bib_end = '<!--END BIB-->'
 
 
 class EntryFormatter:
-    def __init__(self, format_string, bold_authors=None, latex2html=True):
-        self._format_string = format_string
+    def __init__(self, format_spec, connector=', ', terminator='.', bold_authors=None, latex2html=True):
+        self._format_spec = format_spec
+        self._connector = connector
+        self._terminator = terminator
 
         if bold_authors is None:
             self._bold_authors = []
@@ -26,16 +29,37 @@ class EntryFormatter:
 
     def format_entry(self, entry):
         entry = self._preprocess_entry(entry)
-        return self._format_string.format(**entry)
+        fmt_string = self._prepare_fmt_string(entry.keys())
+        return fmt_string.format(**entry)
 
     def add_bold_authors(self, *authors):
         self._bold_authors += authors
 
+    def _prepare_fmt_string(self, available_keys):
+        # Search the format string for instances of {key}, check if "key" is one of the keys available in the entry
+        # dict. If not, remove everything between the start of the missing key and the next key
+        key_re = re.compile(r'(?<=\{)\w+(?=\})')
+        fmt_pieces = []
+        for piece in self._format_spec:
+            key = key_re.search(piece)
+            if key is None:
+                # No key, something went wrong
+                raise ValueError('Each entry in the format specification must contain the substring {key} where key is a bib field (e.g. author, title, year)')
+            elif key.group() in available_keys:
+                fmt_pieces.append(piece)
+
+        return self._connector.join(fmt_pieces) + self._terminator
+
     def _preprocess_entry(self, entry):
         entry = deepcopy(entry)
-        entry['author'] = self._format_authors(entry['author'])
-        # TODO: add format pages which replaces -- with em-dash
-        # TODO: add format doi that prepends "doi:" if necessary and makes it a link to doi.org
+        if 'author' in entry.keys():
+            entry['author'] = self._format_authors(entry['author'])
+        if 'title' in entry.keys():
+            entry['title'] = self._format_title(entry['title'])
+        if 'pages' in entry.keys():
+            entry['pages'] = self._format_pages(entry['pages'])
+        if 'doi' in entry.keys():
+            entry['doi'] = self._format_doi(entry['doi'])
         return entry
 
     def _format_authors(self, authors):
@@ -44,7 +68,7 @@ class EntryFormatter:
         fmt_string = '{otag}{von} {last} {jr}, {first}{ctag}'
         for idx, auth in enumerate(authors):
             auth_joined = {k: ' '.join(v) for k, v in auth.items()}
-            bold_tag = ('<strong>', '</strong>') if auth['last'] in self._bold_authors else ('', '')
+            bold_tag = ('<strong>', '</strong>') if auth['last'][0] in self._bold_authors else ('', '')
             this_author = fmt_string.format(otag=bold_tag[0], ctag=bold_tag[1], **auth_joined)
             # After the first author, put the first name first
             fmt_string = '{otag}{first} {von} {last} {jr}{ctag}'
@@ -61,10 +85,41 @@ class EntryFormatter:
             if idx == len(authors) - 2:
                 author_string += 'and '
 
-        return author_string
+        return self._strip_braces(author_string)
+
+    def _format_title(self, title):
+        # Right now, this is kind of a kluge assuming that my titles only have subscripts as e.g. $_2$ or $_{long}$
+        # I should eventually figure out a more robust encoding
+        title = re.sub(r'\$_\{?', '<sub>', title)
+        title = re.sub(r'\$', '</sub>', title)
+
+        # Remove any remaining braces. These are used in BibTex to keep capitalization and so are unnecessary here.
+        # Should add a check that any braces aren't part of latex commands eventually.
+        return self._strip_braces(title)
+
+    def _format_pages(self, pages):
+        # Replace a double dash with an emdash
+        return re.sub('(?<=\d)--(?=\d)', '&mdash;', pages)
+
+    def _format_doi(self, doi):
+        if doi.startswith('10'):
+            doi_url = 'https://doi.org/{}'.format(doi)
+            doi = 'doi:' + doi
+        elif doi.startswith('doi:10'):
+            doi_url = 'https://doi.org{}'.format(doi.replace('doi:', ''))
+        else:
+            raise ValueError('A DOI value should either start with "10" or "doi:10"')
+
+        return '<a href="{}">{}</a>'.format(doi_url, doi)
+
+    @staticmethod
+    def _strip_braces(s):
+        s = s.replace('{', '')
+        s = s.replace('}', '')
+        return s
 
 
-stdCitation = EntryFormatter('{author} ({year}), <i>{journal}</i>, <i>{volume}</i>, {pages}, {doi}.')
+stdCitation = EntryFormatter(['{author}', '{title}', '<i>{journal}</i>', '<i>{volume}</i>', '{pages}', '{doi}', '{year}'])
 
 
 def sort_bib_entries_by_year(bib_file, entry_type=None):
@@ -74,7 +129,7 @@ def sort_bib_entries_by_year(bib_file, entry_type=None):
     if entry_type is None:
         entries = bib_dat.entries
     else:
-        entries = [e for e in bib_dat.entries if e['ENTRYTYPE'] == entry_type]
+        entries = [e for e in bib_dat.entries if e['ENTRYTYPE'] in entry_type]
 
     years = sorted(set([e['year'] for e in entries]))
 
@@ -85,8 +140,8 @@ def sort_bib_entries_by_year(bib_file, entry_type=None):
     return entries_by_year
 
 
-def insert_bib(html_file, bib_entries, formatter=stdCitation):
-    new_file = html_file + '.new'
+def insert_bib(html_file, bib_entries, formatter=stdCitation, year_fmt=''):
+    new_file = new_html_name(html_file)
     with open(html_file, 'r') as html_obj, open(new_file, 'w') as new_obj:
         in_bib = False
         for line in html_obj:
@@ -94,8 +149,54 @@ def insert_bib(html_file, bib_entries, formatter=stdCitation):
                 new_obj.write(line)
             if line.strip().startswith(bib_start):
                 in_bib = True
-                for entry in bib_entries:
-                    new_file.write('<p>{}</p>\n\n'.format(formatter.format_entry(entry)))
+                for year, entry_list in bib_entries.items():
+                    new_obj.write('<h3>{}</h3>\n\n'.format(year))
+                    for entry in entry_list:
+                        new_obj.write('<p>{}</p>\n\n'.format(formatter.format_entry(entry)))
             elif line.strip().startswith(bib_end):
                 in_bib = False
                 new_obj.write(line)
+
+
+def new_html_name(html_name):
+    return html_name + '.new'
+
+
+def backup_name(name):
+    return name + '.bak'
+
+
+def move_files(html_file, do_backup=True):
+    if do_backup:
+        shutil.move(html_file, backup_name(html_file))
+
+    shutil.move(new_html_name(html_file), html_file)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Insert a bibliography in a website',
+                                     epilog='The HTML file must contain the lines {} and {}, the bibliography will be '
+                                            'placed between those lines. Anything already between them will be lost'.format(bib_start, bib_end))
+    parser.add_argument('bib_file', help='The .bib file to read citations from')
+    parser.add_argument('html_file', help='The .html file to insert the bibliography into')
+    parser.add_argument('-a', '--author-bold', action='append', default=[], help='The last name of an author to make bold in the bibliography.'
+                                                                     ' This option can be repeated to specify multiple authors.')
+    parser.add_argument('-t', '--entry-type', action='append', help='The type of entry to include, e.g. "article" or "misc";'
+                                                                    ' this is the part immediately after the @ in the bibtex file.'
+                                                                    ' This option may be specified multiple times to include multiple'
+                                                                    ' types of entry.')
+    parser.add_argument('-b', '--no-backup', action='store_false', help='Do not create a backup of the old HTML file')
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    stdCitation.add_bold_authors(*args.author_bold)
+    entries = sort_bib_entries_by_year(args.bib_file, entry_type=args.entry_type)
+    insert_bib(args.html_file, entries)
+    move_files(args.html_file, do_backup=args.no_backup)
+
+
+if __name__ == '__main__':
+    main()
