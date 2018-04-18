@@ -6,8 +6,16 @@ import shutil
 
 import pdb
 
+#TODO: make a way to add links to years at the top of the page, marked by link start/link end
+
 bib_start = '<!--START BIB-->'
 bib_end = '<!--END BIB-->'
+link_start = '<!--START LINKS-->'
+link_end = '<!--END LINKS-->'
+
+
+year_header_formats = {'std': '<h3>{0}</h3>',
+                       'bootstrap': '<h3><span class="badge badge-dark">{0}</span></h3>'}
 
 
 class EntryFormatter:
@@ -140,8 +148,10 @@ def sort_bib_entries_by_year(bib_file, entry_type=None):
     return entries_by_year
 
 
-def insert_bib(html_file, bib_entries, formatter=stdCitation, year_fmt=''):
+def insert_bib(html_file, bib_entries, formatter=stdCitation, year_fmt='std'):
     new_file = new_html_name(html_file)
+    if year_fmt in year_header_formats.keys():
+        year_fmt = year_header_formats[year_fmt]
     with open(html_file, 'r') as html_obj, open(new_file, 'w') as new_obj:
         in_bib = False
         for line in html_obj:
@@ -150,7 +160,10 @@ def insert_bib(html_file, bib_entries, formatter=stdCitation, year_fmt=''):
             if line.strip().startswith(bib_start):
                 in_bib = True
                 for year, entry_list in bib_entries.items():
-                    new_obj.write('<h3>{}</h3>\n\n'.format(year))
+                    # Add an anchor for the year
+                    new_obj.write('<a name={0}></a>'.format(year))
+                    # Write the year section header
+                    new_obj.write(year_fmt.format(year) + '\n\n')
                     for entry in entry_list:
                         new_obj.write('<p>{}</p>\n\n'.format(formatter.format_entry(entry)))
             elif line.strip().startswith(bib_end):
@@ -185,6 +198,9 @@ def parse_args():
                                                                     ' this is the part immediately after the @ in the bibtex file.'
                                                                     ' This option may be specified multiple times to include multiple'
                                                                     ' types of entry.')
+    parser.add_argument('-y', '--year-fmt', default='<h3>{0}</h3>\n\n', help='The format string to use to print year section headers. This can be either a'
+                                                                             'string that the format() method can insert one argument in, or one of the'
+                                                                             ' strings "{}"'.format('", "'.join(year_header_formats.keys())))
     parser.add_argument('-b', '--no-backup', action='store_false', help='Do not create a backup of the old HTML file')
 
     return parser.parse_args()
@@ -194,7 +210,7 @@ def main():
     args = parse_args()
     stdCitation.add_bold_authors(*args.author_bold)
     entries = sort_bib_entries_by_year(args.bib_file, entry_type=args.entry_type)
-    insert_bib(args.html_file, entries)
+    insert_bib(args.html_file, entries, year_fmt=args.year_fmt)
     move_files(args.html_file, do_backup=args.no_backup)
 
 
