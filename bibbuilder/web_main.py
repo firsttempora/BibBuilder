@@ -1,5 +1,6 @@
 import argparse
 import bibtexparser
+from collections import OrderedDict
 from copy import deepcopy
 import re
 import shutil
@@ -68,6 +69,12 @@ class EntryFormatter:
             entry['pages'] = self._format_pages(entry['pages'])
         if 'doi' in entry.keys():
             entry['doi'] = self._format_doi(entry['doi'])
+        if 'url' in entry.keys():
+            formatted_url = self._format_url(entry['url'])
+            entry['url'] = formatted_url
+            if 'doi' not in entry.keys():
+                # If a DOI isn't available, insert a URL in its place
+                entry['doi'] = formatted_url
         return entry
 
     def _format_authors(self, authors):
@@ -118,7 +125,10 @@ class EntryFormatter:
         else:
             raise ValueError('A DOI value should either start with "10" or "doi:10"')
 
-        return '<a href="{}">{}</a>'.format(doi_url, doi)
+        return '<a href="{}" target="_blank">{}</a>'.format(doi_url, doi)
+
+    def _format_url(self, url):
+        return '<a href="{}" target="_blank">Link</a>'.format(url)
 
     @staticmethod
     def _strip_braces(s):
@@ -139,9 +149,15 @@ def sort_bib_entries_by_year(bib_file, entry_type=None):
     else:
         entries = [e for e in bib_dat.entries if e['ENTRYTYPE'] in entry_type]
 
-    years = sorted(set([e['year'] for e in entries]))
+    for e in entries:
+        if 'year' not in e.keys():
+            print('{} has no year'.format(e['ID']))
 
-    entries_by_year = dict()
+    years = sorted(set([e['year'] for e in entries]), reverse=True)
+
+    #pdb.set_trace()
+
+    entries_by_year = OrderedDict()
     for y in years:
         entries_by_year[y] = [e for e in entries if e['year'] == y]
 
