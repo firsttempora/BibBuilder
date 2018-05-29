@@ -1,9 +1,11 @@
 import argparse
 import bibtexparser
+import contextlib
 from collections import OrderedDict
 from copy import deepcopy
 import re
 import shutil
+import sys
 
 import pdb
 
@@ -108,6 +110,10 @@ class EntryFormatter:
         title = re.sub(r'\$_\{?', '<sub>', title)
         title = re.sub(r'\$', '</sub>', title)
 
+        # Also handle emphasis. Use groups to directly substitute the argument. This will break if latex commands are
+        # nested.
+        title = re.sub(r'\\emph\{(.*?)}',r'<i>\g<1></i>', title)
+
         # Remove any remaining braces. These are used in BibTex to keep capitalization and so are unnecessary here.
         # Should add a check that any braces aren't part of latex commands eventually.
         return self._strip_braces(title)
@@ -140,7 +146,7 @@ class EntryFormatter:
 stdCitation = EntryFormatter(['{author}', '{title}', '<i>{journal}</i>', '<i>{volume}</i>', '{pages}', '{doi}', '{year}'])
 
 
-def sort_bib_entries_by_year(bib_file, entry_type=None):
+def sort_bib_entries_by_year(bib_file, entry_type=None, prioritize_authors=None, prioritize_submitted=False):
     with open(bib_file, 'r') as bib_obj:
         bib_dat = bibtexparser.load(bib_obj)
 
@@ -159,7 +165,22 @@ def sort_bib_entries_by_year(bib_file, entry_type=None):
 
     entries_by_year = OrderedDict()
     for y in years:
-        entries_by_year[y] = [e for e in entries if e['year'] == y]
+        year_entries = [e for e in entries if e['year'] == y]
+        if prioritize_authors is not None:
+            first_author_papers = []
+            for idx in reversed(range(len(year_entries))):
+                first_author = bibtexparser.customization.splitname(year_entries[idx]['author'].split('and')[0])
+                if first_author['last'][0] in prioritize_authors:
+                    first_author_papers.insert(0, year_entries.pop(idx))
+            year_entries = first_author_papers + year_entries
+        if prioritize_submitted:
+            submitted_papers = []
+            for idx in reversed(range(len(year_entries))):
+                # Assume that "submitted" will be put in place of the volume. If "volume" is not a key, ignore this entry
+                if 'volume' in year_entries[idx] and 'submitted' in year_entries[idx]['volume']:
+                    submitted_papers.insert(0, year_entries.pop(idx))
+            year_entries = submitted_papers + year_entries
+        entries_by_year[y] = year_entries
 
     return entries_by_year
 
@@ -175,16 +196,20 @@ def insert_bib(html_file, bib_entries, formatter=stdCitation, year_fmt='std'):
                 new_obj.write(line)
             if line.strip().startswith(bib_start):
                 in_bib = True
-                for year, entry_list in bib_entries.items():
-                    # Add an anchor for the year
-                    new_obj.write('<a name={0}></a>'.format(year))
-                    # Write the year section header
-                    new_obj.write(year_fmt.format(year) + '\n\n')
-                    for entry in entry_list:
-                        new_obj.write('<p>{}</p>\n\n'.format(formatter.format_entry(entry)))
+                write_bib(new_obj, bib_entries, formatter=formatter, year_fmt=year_fmt)
             elif line.strip().startswith(bib_end):
                 in_bib = False
                 new_obj.write(line)
+
+
+def write_bib(new_obj, bib_entries, formatter=stdCitation, year_fmt='std'):
+    for year, entry_list in bib_entries.items():
+        # Add an anchor for the year
+        new_obj.write('<a name={0}></a>'.format(year))
+        # Write the year section header
+        new_obj.write(year_fmt.format(year) + '\n\n')
+        for entry in entry_list:
+            new_obj.write('<p>{}</p>\n\n'.format(formatter.format_entry(entry)))
 
 
 def new_html_name(html_name):
@@ -207,9 +232,15 @@ def parse_args():
                                      epilog='The HTML file must contain the lines {} and {}, the bibliography will be '
                                             'placed between those lines. Anything already between them will be lost'.format(bib_start, bib_end))
     parser.add_argument('bib_file', help='The .bib file to read citations from')
-    parser.add_argument('html_file', help='The .html file to insert the bibliography into')
+    parser.add_argument('html_file', nargs='?', default='-', help='The .html file to insert the bibliography into. If omitted or given as -, '
+                                                                  'the bibliography will be printed to stdout instead of inserted in the file')
     parser.add_argument('-a', '--author-bold', action='append', default=[], help='The last name of an author to make bold in the bibliography.'
                                                                      ' This option can be repeated to specify multiple authors.')
+    parser.add_argument('-f', '--prioritize-first-author', action='store_true', help='Within each year, put papers with one of '
+                                                                                     'the bolded authors as first author to the top')
+    parser.add_argument('-s', '--prioritize-submitted', action='store_true', help='Place "submitted" articles above other articles in '
+                                                                                  'the same year. Requires that "submitted" must be written '
+                                                                                  'in the volume field of the bibtex entry')
     parser.add_argument('-t', '--entry-type', action='append', help='The type of entry to include, e.g. "article" or "misc";'
                                                                     ' this is the part immediately after the @ in the bibtex file.'
                                                                     ' This option may be specified multiple times to include multiple'
@@ -224,10 +255,18 @@ def parse_args():
 
 def main():
     args = parse_args()
+    to_stdout = args.html_file == '-'
     stdCitation.add_bold_authors(*args.author_bold)
-    entries = sort_bib_entries_by_year(args.bib_file, entry_type=args.entry_type)
-    insert_bib(args.html_file, entries, year_fmt=args.year_fmt)
-    move_files(args.html_file, do_backup=args.no_backup)
+
+    priority_authors = args.author_bold if args.prioritize_first_author else None
+    entries = sort_bib_entries_by_year(args.bib_file, entry_type=args.entry_type, prioritize_authors=priority_authors,
+                                       prioritize_submitted=args.prioritize_submitted)
+
+    if to_stdout:
+        write_bib(sys.stdout, entries, year_fmt=args.year_fmt)
+    else:
+        insert_bib(args.html_file, entries, year_fmt=args.year_fmt)
+        move_files(args.html_file, do_backup=args.no_backup)
 
 
 if __name__ == '__main__':
