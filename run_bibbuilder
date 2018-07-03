@@ -1,8 +1,0 @@
-#!/bin/bash
-
-mydir=$(dirname $0)
-mydir=$(cd $mydir; pwd -P)
-source $mydir/../bin/activate
-currdir=$(pwd)
-cd "$mydir"
-python -m bibbuilder.bib_main --working-dir="$currdir" "$@"
