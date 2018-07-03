@@ -38,3 +38,20 @@ The `bb-merge` program is designed to combine two or more .bib files. It will av
 default will ask what to do if it finds two entries that share a key. It also has the option to exclude entries that are identified
 by a key that exists in one or more "exclude" .bib files - this way you can ensure that the merged .bib file will be compatible 
 as an additional bib resource alongside one or more other .bib files.
+
+
+## Package utilities
+
+In addition to the command line programs, the `bib_utils` module in this package has several Python objects that can help
+if you need to write your own Python program to work with .bib files. Some highlights are:
+
+* `BetterBibDatabase` extends the `BibDatabase` class from the `bibtexparser` package that adds convenience functionality 
+(e.g. built-in methods to load from and save to a file, add or remove an entry, etc.) and has a more internally-consistent 
+treatment of entries (currently, all entries are stored in the `entries` list attribute and the `entries_dict` attribute
+is generate from that list on demand, so the two are always linked - the `entries_dict` cannot be modified directly).
+* `init_bib_database` is a function that creates an instance of `BetterBibDatabase` and can automatically back up the .bib
+file.
+* `pdf2bib` is a function that encapsulates reading a PDF file, searching for a DOI and retrieving the BibTex entry.
+Fair warning: I'm an atmospheric chemist, so I've only tested it on atmospherically relevant journals.
+
+
