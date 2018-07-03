@@ -13,6 +13,7 @@ setup(
     install_requires=['bibtexparser',
                       'doi2bib',
                       'PyPDF2',
+                      'pylatexenc',
                       'textui'],
     entry_points={
         'console_scripts': ['bb-merge=bibbuilder.scripts.merge_bib_files:main',
