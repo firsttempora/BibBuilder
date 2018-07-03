@@ -1,6 +1,8 @@
 import bibtexparser
 from bibtexparser.bibdatabase import BibDatabase
 from bibtexparser.bparser import BibTexParser
+from collections import Mapping
+import copy
 from datetime import datetime as dtime
 from doi2bib.crossref import get_bib_from_doi
 from pylatexenc.latexencode import utf8tolatex
@@ -49,6 +51,24 @@ class ChangeHomeError(Exception):
     pass
 
 
+class ReadOnlyDict(Mapping):
+    # Slightly modified from https://stackoverflow.com/a/28452633
+    def __init__(self, *args, **kwargs):
+        self._data = dict(*args, **kwargs)
+
+    def __getitem__(self, item):
+        return self._data[item]
+
+    def __len__(self):
+        return len(self._data)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def as_mutable_dict(self):
+        return copy.deepcopy(self._data)
+
+
 class BetterBibDatabase(BibDatabase):
     @property
     def files(self):
@@ -58,8 +78,57 @@ class BetterBibDatabase(BibDatabase):
     def dois(self):
         return [el['doi'] for el in self.entries if 'doi' in el]
 
+    @property
     def ids(self):
         return [el['ID'] for el in self.entries]
+
+    @property
+    def filename(self):
+        return self._filename
+
+    @property
+    def entries_dict(self):
+        # Override so that entries_dict is always consistent with entries
+        # Return as a read-only dict because we do not want to allow assignment
+        # to this, any assignment would be lost
+        return ReadOnlyDict(**{entry['ID']: entry for entry in self.entries})
+
+    def __init__(self, *args, **kwargs):
+        super(BetterBibDatabase, self).__init__(*args, **kwargs)
+        self._filename = ''
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            return self.entries[item]
+        elif isinstance(item, str):
+            return self.entries_dict[item]
+        else:
+            raise TypeError('item must be an int or str')
+
+    def _find_entry_index_by_key(self, key):
+        for entry in self.entries:
+            if entry['ID'] == key:
+                return self.entries.index(entry)
+        raise KeyError('No entry with ID "{}"'.format(key))
+
+    @staticmethod
+    def _validate_new_entry(new_entry):
+        req_keys = ['ID', 'ENTRYTYPE']
+        if not isinstance(new_entry, dict) or any([k not in new_entry for k in req_keys]):
+            raise ValueError('new_entry must be a dict with at least keys "{}"'.format('", "'.join(req_keys)))
+
+    def add_entry(self, new_entry):
+        """
+        Add a new entry to the database.
+
+        Internally, appends the entry to the self.entries list after checking that it is a valid entry dict.
+        :param new_entry: the entry to add
+        :type new_entry: dict
+
+        :return: none
+        """
+        self._validate_new_entry(new_entry)
+        self.entries.append(new_entry)
 
     def add_entry_by_string(self, bib_string, file_name=None, skip_if_file_exists=True, skip_if_doi_exists=False,
                             parser=None):
@@ -119,6 +188,15 @@ class BetterBibDatabase(BibDatabase):
         bib_string = pdf2bib(pdf_file)
         self.add_entry_by_string(bib_string, file_name=pdf_file, **kwargs)
 
+    def replace_entry_by_key(self, key, new_entry):
+        self._validate_new_entry(new_entry)
+        ind = self._find_entry_index_by_key(key)
+        self.entries[ind] = new_entry
+
+    def remove_entry_by_key(self, key):
+        ind = self._find_entry_index_by_key(key)
+        self.entries.pop(ind)
+
     @staticmethod
     def load_from_file(bib_file, update_home=True):
         """
@@ -131,6 +209,7 @@ class BetterBibDatabase(BibDatabase):
         with open(bib_file, 'r') as bib_obj:
             tmpdat = bibtexparser.load(bib_obj)
         bibdat = BetterBibDatabase()
+        bibdat._filename = bib_file
         bibdat.entries = tmpdat.entries
 
         home_dir = os.getenv('HOME')
@@ -203,7 +282,7 @@ class BetterBibDatabase(BibDatabase):
         record_id = re.sub('[^\w\-]', '', record_id)
 
         # Check if the current ID exists already. If it does, add a letter to the end to make it unique.
-        all_ids = self.ids()
+        all_ids = self.ids
         if record_id not in all_ids:
             return record_id
 
@@ -213,6 +292,41 @@ class BetterBibDatabase(BibDatabase):
                 return new_id
 
         raise RuntimeError('Ran out of possible suffixes for record ID "{}"'.format(record_id))
+
+    @classmethod
+    def entry_as_string(cls, entry):
+        """
+        Convert a database entry into a BibTex string formatted nicely with newlines
+
+        :param entry: the entry dictionary to convert to a string
+        :type entry: dict
+
+        :return: the string
+        """
+
+        entry_string = '@{type}{{{id},\n'.format(type=entry['ENTRYTYPE'], id=entry['ID'])
+        for key, val in entry.items():
+            if key not in ['ENTRYTYPE', 'ID']:
+                entry_string += '    {key} = {{{value}}},\n'.format(key=key, value=val)
+
+        entry_string += '}\n'
+
+        return entry_string
+
+    def get_entry_as_string(self, entry_id):
+        """
+        Gets the entry identified by the ID/key ``entry_id`` and formats it as a string.
+
+        Shortcut to the class method :py:meth:`~.BetterBibDatabase.entry_as_string` that will
+        automatically retrieve the specified entry from this instance and pass it to that class
+        method.
+
+        :param entry_id: the ID/key of the entry to format as a string
+        :type entry_id: str
+
+        :return: the entry formatted as a string
+        """
+        return self.entry_as_string(self[entry_id])
 
 
 def shell_error(msg, exit_code=1):
@@ -327,8 +441,13 @@ def init_bib_database(bib_file, no_backup=False, update_home=True):
     Initialize the BibTex database. If given file exist, back it up and read it in. If it does not exist, create an
     empty database.
     :param bib_file: the path to the .bib file to create or update.
-    :param no_backup: boolean, if False (default) the bib file is backed up before being loaded (if it exists). If true,
-    it is not backed up.
+    :param no_backup: optional, if False (default) the bib file is backed up before being loaded (if it exists). If true,
+        it is not backed up.
+    :type no_backup: bool
+
+    :param update_home: optional, default is ``True``, will attempt to update the home directory of all keys' "file"
+        attributes to match the current machine.
+
     :return: an instance of BetterBibDatabase.
     """
     if os.path.isfile(bib_file):
