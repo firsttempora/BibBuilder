@@ -3,7 +3,7 @@ from datetime import datetime
 import logging
 import os
 
-from . import bib_utils as bu, root_logger
+from .. import bib_utils as bu, root_logger
 
 # TODO: implement pruning
 # TODO: continue to add doi regex to get as many papers as possible

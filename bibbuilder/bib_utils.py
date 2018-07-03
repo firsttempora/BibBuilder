@@ -7,7 +7,6 @@ from datetime import datetime as dtime
 from doi2bib.crossref import get_bib_from_doi
 from pylatexenc.latexencode import utf8tolatex
 from PyPDF2 import PdfFileReader
-from PyPDF2.utils import PdfReadError
 import os
 import re
 import shutil
