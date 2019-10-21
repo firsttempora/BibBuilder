@@ -26,5 +26,5 @@ six==1.11.0
 title2bib==0.3.0
 traitlets==4.3.2
 Unidecode==1.0.22
-urllib3==1.22
+urllib3==1.24.2
 wcwidth==0.1.7
