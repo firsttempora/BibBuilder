@@ -19,7 +19,7 @@ ptyprocess==0.5.2
 Pygments==2.2.0
 pylatexenc==1.2
 pyparsing==2.2.0
-PyPDF2==1.26.0
+PyPDF2==1.27.5
 requests==2.18.4
 simplegeneric==0.8.1
 six==1.11.0
