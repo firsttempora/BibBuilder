@@ -1,7 +1,7 @@
 arxivcheck==0.3.1
 bibcure==0.3.0
 bibtexparser==1.0.1
-certifi==2018.1.18
+certifi==2022.12.7
 chardet==3.0.4
 decorator==4.2.1
 doi2bib==0.3.0
